@@ -1,0 +1,39 @@
+# ------------------------------------
+# Archivos/Carpetas Comunes (SO y Editor)
+# ------------------------------------
+.DS_Store             # Archivos de metadatos de macOS
+Thumbs.db             # Archivos de caché de Windows
+*.log                 # Archivos de registro
+.vscode/              # Configuraciones de workspace de VS Code (opcional, si no quieres compartirlas)
+
+# ------------------------------------
+# Entornos Virtuales
+# ------------------------------------
+# Común para Python (típicamente 'venv' o 'env')
+venv/
+env/
+
+# Si usas Conda
+.conda/
+.direnv/
+
+# Común para Node.js
+node_modules/
+# Archivos de caché de Node
+npm-debug.log
+yarn-error.log
+
+# ------------------------------------
+# Otros Archivos de Compilación/Caché Comunes
+# ------------------------------------
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Java
+/bin/
+/target/
+
+# Si usas algún archivo de configuración sensible
+*.env
