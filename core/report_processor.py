@@ -365,7 +365,6 @@ class ReporteProcessor:
         except Exception as e:
             return {"error": f"Error generando resumen: {str(e)}"}
 
-    def exportar_con_resultados(self, sesion, ruta_salida: str) -> Tuple[bool, str]:
         """
         Exporta el reporte original con columnas adicionales de resultados.
 
@@ -401,21 +400,66 @@ class ReporteProcessor:
                 if boleto:
                     resultados.append(
                         {
-                            "ESTADO_ESCANEO": boleto.estado.value,
-                            "FECHA_ESCANEO": boleto.fecha_escaneo.isoformat()
-                            if boleto.fecha_escaneo
-                            else "",
-                            "ESCANEOS_REALIZADOS": boleto.escaneos_realizados,
+                            "VALIDADO": "OK"
+                            if boleto.estado == EstadoBoleto.ESCANEADO
+                            else ""
                         }
                     )
                 else:
-                    resultados.append(
-                        {
-                            "ESTADO_ESCANEO": self.constantes.ESTADO_NO_ESCANEADO,
-                            "FECHA_ESCANEO": "",
-                            "ESCANEOS_REALIZADOS": 0,
-                        }
-                    )
+                    resultados.append({"VALIDADO": ""})
+
+            # Convertir resultados a DataFrame y unir
+            df_resultados = pd.DataFrame(resultados)
+            df_export = pd.concat([df_export, df_resultados], axis=1)
+
+            # Guardar archivo según extensión
+            extension = os.path.splitext(ruta_salida)[1].lower()
+
+            if extension == ".csv":
+                df_export.to_csv(
+                    ruta_salida, index=False, encoding=self.constantes.ENCODING
+                )
+            else:
+                df_export.to_excel(ruta_salida, index=False)
+
+            return True, f"Archivo exportado exitosamente: {ruta_salida}"
+
+        except Exception as e:
+            return False, f"Error al exportar: {str(e)}"
+
+    def exportar_con_resultados(self, sesion, ruta_salida: str) -> Tuple[bool, str]:
+        """
+        Exporta el reporte original con columnas adicionales de resultados.
+        """
+        try:
+            if self.df is None:
+                raise ValueError("No hay datos cargados para exportar")
+
+            # Crear copia del DataFrame original
+            df_export = self.df.copy()
+
+            # Agregar columnas de resultados - SOLO VALIDADO
+            resultados = []
+
+            # Columna de código de barras detectada
+            col_codigo = self.columnas_detectadas.get(
+                self.constantes.COLUMNA_CODIGO_BARRA
+            )
+            if not col_codigo:
+                raise ValueError("No se detectó columna de código de barras")
+
+            # Importar EstadoBoleto aquí para la comparación
+            from inventario_boletos.core.entities import EstadoBoleto
+
+            # Para cada fila en el DataFrame original
+            for _, fila in df_export.iterrows():
+                codigo = str(fila[col_codigo]).strip()
+                boleto = sesion.buscar_boleto(codigo)
+
+                if boleto and boleto.estado == EstadoBoleto.ESCANEADO:
+                    resultados.append({"VALIDADO": "OK"})
+                else:
+                    resultados.append({"VALIDADO": ""})
 
             # Convertir resultados a DataFrame y unir
             df_resultados = pd.DataFrame(resultados)
@@ -438,7 +482,7 @@ class ReporteProcessor:
 
     def cargar_reporte_con_estados(self, ruta_archivo: str):
         """
-        Carga un reporte que ya contiene columnas de estado de escaneo.
+        Carga un reporte que ya contiene columna de estado VALIDADO.
 
         Returns:
             Tuple (éxito, mensaje, lista_de_boletos)
@@ -449,21 +493,25 @@ class ReporteProcessor:
             if not exito:
                 return False, mensaje, []
 
-            # Verificar que tenga columnas de estado
-            tiene_estados = "ESTADO_ESCANEO" in self.df.columns
-            if not tiene_estados:
-                return False, "El archivo no contiene columna 'ESTADO_ESCANEO'", []
+            # Verificar que tenga columna VALIDADO (antes era ESTADO_ESCANEO)
+            tiene_valido = "VALIDADO" in self.df.columns
+            if not tiene_valido:
+                return False, "El archivo no contiene columna 'VALIDADO'", []
 
             # Obtener boletos con sus estados
             boletos_con_estado = self._obtener_boletos_con_estado()
 
-            return True, "Reporte con estados cargado exitosamente", boletos_con_estado
+            return (
+                True,
+                "Reporte con estado VALIDADO cargado exitosamente",
+                boletos_con_estado,
+            )
 
         except Exception as e:
             return False, f"Error al cargar reporte con estados: {str(e)}", []
 
     def _obtener_boletos_con_estado(self):
-        """Obtiene boletos desde un reporte que ya tiene estados"""
+        """Obtiene boletos desde un reporte que ya tiene columna VALIDADO"""
         if self.df is None or self.df.empty:
             return []
 
@@ -482,14 +530,8 @@ class ReporteProcessor:
                     else:
                         datos_boleto[col_estandar] = ""
 
-                # Obtener estado si existe
-                estado_str = str(fila.get("ESTADO_ESCANEO", "")).strip()
-                fecha_escaneo_str = str(fila.get("FECHA_ESCANEO", "")).strip()
-                escaneos_realizados = 0
-                try:
-                    escaneos_realizados = int(fila.get("ESCANEOS_REALIZADOS", 0))
-                except:
-                    pass
+                # Obtener valor de VALIDADO si existe
+                validado_str = str(fila.get("VALIDADO", "")).strip()
 
                 # Asegurar que el código sea string
                 codigo = datos_boleto[self.constantes.COLUMNA_CODIGO_BARRA]
@@ -519,65 +561,19 @@ class ReporteProcessor:
                     datos_originales=fila.to_dict(),
                 )
 
-                # Aplicar estado si existe - CORREGIDO: convertir string a EstadoBoleto
-                if estado_str:
-                    try:
-                        # Importar EstadoBoleto aquí o al inicio del archivo
-                        from inventario_boletos.core.entities import EstadoBoleto
+                # Importar EstadoBoleto
+                from inventario_boletos.core.entities import EstadoBoleto
 
-                        # Intentar convertir el string a EstadoBoleto
-                        # Primero intentar coincidencia exacta con value
-                        estado_encontrado = None
-                        for estado_enum in EstadoBoleto:
-                            if estado_enum.value == estado_str:
-                                estado_encontrado = estado_enum
-                                break
-
-                        # Si no coincide con value, intentar con name
-                        if estado_encontrado is None:
-                            for estado_enum in EstadoBoleto:
-                                if estado_enum.name == estado_str:
-                                    estado_encontrado = estado_enum
-                                    break
-
-                        # Si aún no encuentra, usar PENDIENTE como default
-                        if estado_encontrado is None:
-                            estado_encontrado = EstadoBoleto.PENDIENTE
-                            # También podemos intentar crear desde string directamente
-                            try:
-                                estado_encontrado = EstadoBoleto(estado_str)
-                            except ValueError:
-                                pass  # Ya tenemos PENDIENTE como fallback
-
-                        boleto.estado = estado_encontrado
-
-                    except Exception as e:
-                        # En caso de error, usar PENDIENTE
-                        from inventario_boletos.core.entities import EstadoBoleto
-
-                        boleto.estado = EstadoBoleto.PENDIENTE
-                        if self.config.debug_mode:
-                            print(
-                                f"DEBUG: Error convirtiendo estado '{estado_str}': {e}"
-                            )
-
-                # Manejar fecha de escaneo
-                if fecha_escaneo_str and fecha_escaneo_str not in [
-                    "",
-                    "nan",
-                    "NaT",
-                    "None",
-                ]:
-                    try:
-                        from datetime import datetime
-
-                        boleto.fecha_escaneo = datetime.fromisoformat(
-                            fecha_escaneo_str.replace("Z", "+00:00")
-                        )
-                    except:
-                        pass  # Ignorar error de fecha
-
-                boleto.escaneos_realizados = escaneos_realizados
+                # Determinar estado basado en columna VALIDADO
+                # Si tiene "OK", significa que fue escaneado previamente
+                if validado_str.upper() == "OK":
+                    boleto.estado = EstadoBoleto.ESCANEADO
+                    # También podemos marcar que ya fue escaneado
+                    boleto.escaneos_realizados = 1
+                else:
+                    # Si no tiene "OK", asumimos PENDIENTE
+                    boleto.estado = EstadoBoleto.PENDIENTE
+                    boleto.escaneos_realizados = 0
 
                 boletos.append(boleto)
 

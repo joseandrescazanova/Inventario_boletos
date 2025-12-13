@@ -179,6 +179,8 @@ class SesionInventario:
     fecha_inicio: datetime = field(default_factory=datetime.now)
     fecha_fin: Optional[datetime] = None
 
+    ruta_reporte_original: Optional[str] = None
+
     # Colecciones
     boletos: Dict[str, Boleto] = field(default_factory=dict)  # código -> Boleto
     escaneos: List[Dict[str, Any]] = field(default_factory=list)
@@ -260,17 +262,6 @@ class SesionInventario:
                 "timestamp": timestamp,
                 "fue_duplicado": False,
             }
-            # NO se agrega a self.boletos, NO se cuenta en estadísticas
-            # Boleto no encontrado en el reporte
-            boleto_no_reportado = Boleto(codigo=codigo)
-            boleto_no_reportado.marcar_no_reportado()
-            resultado = {
-                "resultado": ResultadoEscaneo.NO_ENCONTRADO,
-                "boleto": boleto_no_reportado,
-                "mensaje": f"Boleto {codigo} no encontrado en el reporte",
-                "timestamp": timestamp,
-                "fue_duplicado": False,
-            }
 
         # Registrar escaneo
         self.escaneos.append(resultado)
@@ -304,6 +295,114 @@ class SesionInventario:
             return (datetime.now() - self.fecha_inicio).total_seconds()
         return None
 
+    @classmethod
+    def cargar_progreso_rapido(cls, ruta_json: str):
+        """
+        Carga una sesión desde un archivo JSON guardado previamente
+
+        Args:
+            ruta_json: Ruta al archivo JSON
+
+        Returns:
+            Tuple (éxito, mensaje, sesion_cargada)
+        """
+        try:
+            import json
+            from datetime import datetime
+            import os
+
+            # Verificar que el archivo existe
+            if not os.path.exists(ruta_json):
+                return False, f"Archivo no encontrado: {ruta_json}", None
+
+            # Leer el archivo JSON
+            with open(ruta_json, "r", encoding="utf-8") as f:
+                datos = json.load(f)
+
+            # Crear nueva sesión
+            sesion = SesionInventario()
+
+            # Restaurar campos básicos
+            sesion.id_sesion = datos.get("id_sesion", sesion.id_sesion)
+            sesion.ruta_reporte_original = datos.get("ruta_reporte_original")
+
+            # Restaurar fecha_inicio si está en los datos
+            fecha_inicio_str = datos.get("fecha_inicio")
+            if fecha_inicio_str:
+                try:
+                    sesion.fecha_inicio = datetime.fromisoformat(fecha_inicio_str)
+                except:
+                    pass  # Mantener la fecha_inicio por defecto
+
+            # Restaurar fecha_fin si está en los datos
+            fecha_fin_str = datos.get("fecha_fin")
+            if fecha_fin_str:
+                try:
+                    sesion.fecha_fin = datetime.fromisoformat(fecha_fin_str)
+                except:
+                    sesion.fecha_fin = None
+
+            # Restaurar boletos
+            if "boletos" in datos and isinstance(datos["boletos"], list):
+                for boleto_data in datos["boletos"]:
+                    # Crear boleto
+                    boleto = Boleto(
+                        codigo=boleto_data.get("codigo", ""),
+                        sucursal=boleto_data.get("sucursal", ""),
+                        vendedor_documento=boleto_data.get("vendedor_documento", ""),
+                        vendedor_nombre=boleto_data.get("vendedor_nombre", ""),
+                        fecha_pago=boleto_data.get("fecha_pago", ""),
+                        monto_premio=float(boleto_data.get("monto_premio", 0.0)),
+                        tipo_premio=boleto_data.get("tipo_premio", ""),
+                        datos_originales=boleto_data.get("datos_originales", {}),
+                    )
+
+                    # Restaurar estado
+                    estado_str = boleto_data.get("estado", "PENDIENTE")
+                    try:
+                        boleto.estado = EstadoBoleto[estado_str]
+                    except:
+                        boleto.estado = EstadoBoleto.PENDIENTE
+
+                    # Restaurar fecha de escaneo
+                    fecha_escaneo_str = boleto_data.get("fecha_escaneo")
+                    if fecha_escaneo_str:
+                        try:
+                            boleto.fecha_escaneo = datetime.fromisoformat(
+                                fecha_escaneo_str
+                            )
+                        except:
+                            boleto.fecha_escaneo = None
+
+                    # Restaurar escaneos realizados
+                    boleto.escaneos_realizados = boleto_data.get(
+                        "escaneos_realizados", 0
+                    )
+
+                    # Agregar a la sesión (como diccionario)
+                    sesion.boletos[boleto.codigo] = boleto
+
+            # Restaurar estadísticas
+            if "estadisticas" in datos:
+                stats_data = datos["estadisticas"]
+                sesion.estadisticas = Estadisticas(
+                    total_boletos=stats_data.get("total_boletos", 0),
+                    escaneados=stats_data.get("escaneados", 0),
+                    pendientes=stats_data.get("pendientes", 0),
+                    duplicados=stats_data.get("duplicados", 0),
+                    no_encontrados=stats_data.get("no_encontrados", 0),
+                )
+            else:
+                # Si no hay estadísticas guardadas, calcularlas
+                sesion.actualizar_estadisticas()
+
+            return True, "Progreso cargado exitosamente", sesion
+
+        except json.JSONDecodeError as e:
+            return False, f"Error al leer archivo JSON: {str(e)}", None
+        except Exception as e:
+            return False, f"Error al cargar progreso: {str(e)}", None
+
     def guardar_progreso_rapido(self, ruta_archivo: str):
         """
         Guarda el progreso actual en un archivo JSON simple.
@@ -313,6 +412,7 @@ class SesionInventario:
         """
         try:
             import json
+            import os
 
             # Preparar datos para guardar
             datos = {
@@ -321,20 +421,37 @@ class SesionInventario:
                 if self.fecha_inicio
                 else None,
                 "fecha_fin": self.fecha_fin.isoformat() if self.fecha_fin else None,
-                "total_boletos": len(self.boletos),
-                "estadisticas": self.estadisticas.to_dict(),
-                "boletos_estado": {},
+                "ruta_reporte_original": self.ruta_reporte_original,
+                "boletos": [],  # Lista de objetos boleto completos
             }
 
-            # Guardar estado de cada boleto
-            for codigo, boleto in self.boletos.items():
-                datos["boletos_estado"][codigo] = {
-                    "estado": boleto.estado.value,
-                    "fecha_escaneo": boleto.fecha_escaneo.isoformat()
-                    if boleto.fecha_escaneo
-                    else None,
-                    "escaneos_realizados": boleto.escaneos_realizados,
-                }
+            # Guardar todos los boletos completos
+            for boleto in self.boletos.values():
+                datos["boletos"].append(
+                    {
+                        "codigo": boleto.codigo,
+                        "sucursal": boleto.sucursal,
+                        "vendedor_documento": boleto.vendedor_documento,
+                        "vendedor_nombre": boleto.vendedor_nombre,
+                        "fecha_pago": boleto.fecha_pago,
+                        "monto_premio": boleto.monto_premio,
+                        "tipo_premio": boleto.tipo_premio,
+                        "estado": boleto.estado.value,
+                        "fecha_escaneo": boleto.fecha_escaneo.isoformat()
+                        if boleto.fecha_escaneo
+                        else None,
+                        "escaneos_realizados": boleto.escaneos_realizados,
+                        "datos_originales": boleto.datos_originales,
+                    }
+                )
+
+            # Guardar estadísticas
+            datos["estadisticas"] = self.estadisticas.to_dict()
+
+            # Asegurar que el directorio existe
+            directorio = os.path.dirname(ruta_archivo)
+            if directorio and not os.path.exists(directorio):
+                os.makedirs(directorio)
 
             # Guardar en archivo
             with open(ruta_archivo, "w", encoding="utf-8") as f:

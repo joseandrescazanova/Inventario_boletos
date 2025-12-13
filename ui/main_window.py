@@ -12,8 +12,8 @@ from inventario_boletos.core.entities import SesionInventario, EstadoBoleto
 from inventario_boletos.core.report_processor import ReporteProcessor
 from inventario_boletos.ui.styles import AppStyles, AppColors
 from inventario_boletos.ui.widgets import CampoEscaneo, PanelEstadisticas, ListaEscaneos
-from inventario_boletos.core.entities import SesionInventario, EstadoBoleto
 from inventario_boletos.ui.sound_manager import SoundManager, TipoSonido
+from inventario_boletos.ui.file_dialog_manager import FileDialogManager
 
 
 class MainWindow:
@@ -25,8 +25,14 @@ class MainWindow:
         self.reporte_processor: ReporteProcessor = None
         self.ruta_reporte_actual: str = None
 
-        # AÑADIR ESTA LÍNEA
+        # Inicializar Manejador de Sonidos
         self.sound_manager = SoundManager()
+
+        # Inicializar Gestor de diálogos de archivo
+        self.file_dialog_manager = FileDialogManager()
+
+        # Verificar que las carpetas en español existan
+        self._verificar_carpetas_espanol()
 
         # Mostrar estado de sonidos (opcional, para debug)
         sound_status = self.sound_manager.get_sounds_status()
@@ -96,7 +102,7 @@ class MainWindow:
         """Construye el panel de controles superiores"""
         self.frame_controles.grid_columnconfigure(1, weight=1)
 
-        # Frame para botones de carga
+        # Frame para botones de carga - AHORA CON DISPOSICIÓN VERTICAL
         frame_botones_carga = ttk.Frame(self.frame_controles)
         frame_botones_carga.grid(row=0, column=0, padx=10, pady=10, sticky="w")
 
@@ -104,21 +110,31 @@ class MainWindow:
         self.btn_cargar_nuevo = ttk.Button(
             frame_botones_carga,
             text="📂 NUEVO REPORTE",
-            command=self._cargar_reporte,
+            command=lambda: self._cargar_reporte(),
             style="Primary.TButton",
-            width=18,
+            width=35,  # Ancho consistente
         )
-        self.btn_cargar_nuevo.pack(side="left", padx=(0, 5))
+        self.btn_cargar_nuevo.pack(fill="x", pady=(0, 5))
 
-        # Botón para continuar progreso
-        self.btn_continuar = ttk.Button(
+        # Botón para continuar desde Excel/CSV
+        self.btn_continuar_excel = ttk.Button(
             frame_botones_carga,
-            text="↻ CONTINUAR",
-            command=self._cargar_continuar,
+            text="📊 CONTINUAR CON XLS/CSV",
+            command=lambda: self._cargar_continuar_excel(),
             style="Secondary.TButton",
-            width=15,
+            width=35,  # Ancho consistente
         )
-        self.btn_continuar.pack(side="left")
+        self.btn_continuar_excel.pack(fill="x", pady=(0, 5))
+
+        # Botón para continuar desde JSON
+        self.btn_continuar_json = ttk.Button(
+            frame_botones_carga,
+            text="💾 CONTINUAR CON JSON",
+            command=lambda: self._cargar_continuar_json(),
+            style="Secondary.TButton",
+            width=35,  # Ancho consistente
+        )
+        self.btn_continuar_json.pack(fill="x")
 
         # Label de archivo cargado
         self.lbl_archivo = ttk.Label(
@@ -223,14 +239,9 @@ class MainWindow:
 
     def _cargar_reporte(self):
         """Carga un archivo de reporte Excel/CSV"""
-        tipos_archivo = [
-            ("Excel files", "*.xlsx *.xls"),
-            ("CSV files", "*.csv"),
-            ("All files", "*.*"),
-        ]
-
-        ruta_archivo = filedialog.askopenfilename(
-            title="Seleccionar reporte de boletos", filetypes=tipos_archivo
+        # USAR EL NUEVO GESTOR DE DIÁLOGOS
+        ruta_archivo = self.file_dialog_manager.seleccionar_reporte_nuevo(
+            "Seleccionar reporte de boletos"
         )
 
         if not ruta_archivo:
@@ -247,6 +258,7 @@ class MainWindow:
 
             # Crear nueva sesión
             self.sesion = SesionInventario()
+            self.sesion.ruta_reporte_original = ruta_archivo
             boletos = self.reporte_processor.obtener_boletos()
             self.sesion.agregar_boletos(boletos)
 
@@ -448,20 +460,17 @@ class MainWindow:
             )
             return
 
-        # Sugerir nombre de archivo
-        nombre_base = os.path.splitext(os.path.basename(self.ruta_reporte_actual))[0]
-        fecha = datetime.now().strftime("%Y%m%d_%H%M%S")
-        nombre_sugerido = f"{nombre_base}_RESULTADOS_{fecha}.xlsx"
+        # Obtener nombre base del archivo actual
+        if self.ruta_reporte_actual:
+            nombre_base = os.path.splitext(os.path.basename(self.ruta_reporte_actual))[
+                0
+            ]
+        else:
+            nombre_base = "resultados"
 
-        ruta_guardar = filedialog.asksaveasfilename(
-            title="Guardar resultados como",
-            defaultextension=".xlsx",
-            initialfile=nombre_sugerido,
-            filetypes=[
-                ("Excel files", "*.xlsx"),
-                ("CSV files", "*.csv"),
-                ("All files", "*.*"),
-            ],
+        # USAR EL NUEVO GESTOR DE DIÁLOGOS
+        ruta_guardar = self.file_dialog_manager.guardar_resultados(
+            nombre_base=nombre_base, titulo="Guardar resultados como"
         )
 
         if not ruta_guardar:
@@ -483,21 +492,127 @@ class MainWindow:
         except Exception as e:
             messagebox.showerror("Error", f"Error al exportar:\n{str(e)}")
 
-    def _cargar_continuar(self):
-        """Carga un reporte exportado para continuar el escaneo"""
-        tipos_archivo = [
-            ("Reportes exportados", "*.xlsx *.xls *.csv"),
-            ("Todos los archivos", "*.*"),
-        ]
-
-        ruta_archivo = filedialog.askopenfilename(
-            title="Seleccionar reporte para continuar", filetypes=tipos_archivo
+    def _cargar_continuar_excel(self):
+        """Carga un reporte exportado (Excel/CSV) para continuar el escaneo"""
+        ruta_archivo = self.file_dialog_manager.seleccionar_reporte_continuar(
+            "Seleccionar reporte Excel/CSV para continuar"
         )
 
         if not ruta_archivo:
             return
 
         self._cargar_reporte_con_estados(ruta_archivo)
+
+    def _cargar_continuar_json(self):
+        """Carga un progreso guardado (JSON) para continuar el escaneo"""
+        ruta_archivo = self.file_dialog_manager.seleccionar_progreso_json(
+            "Seleccionar progreso guardado (JSON)"
+        )
+
+        # VERIFICACIÓN MEJORADA: Manejar explícitamente None y cadena vacía
+        if ruta_archivo is None:
+            # Usuario canceló el diálogo - salir silenciosamente
+            return
+        elif isinstance(ruta_archivo, str) and ruta_archivo.strip() == "":
+            # Diálogo retornó cadena vacía - salir silenciosamente
+            return
+        elif not isinstance(ruta_archivo, str):
+            # Tipo inesperado - mostrar error
+            messagebox.showerror(
+                "Error", f"Tipo de ruta inválido: {type(ruta_archivo)}"
+            )
+            return
+
+        try:
+            # Cargar el progreso desde JSON
+            exito, mensaje, sesion_cargada = SesionInventario.cargar_progreso_rapido(
+                ruta_archivo
+            )
+
+            if not exito:
+                messagebox.showerror("Error", mensaje)
+                return
+
+            # Asignar la sesión cargada
+            self.sesion = sesion_cargada
+
+            # Necesitamos también el reporte processor
+            # Para esto, cargamos el reporte original desde la ruta guardada en la sesión
+            if (
+                hasattr(self.sesion, "ruta_reporte_original")
+                and self.sesion.ruta_reporte_original
+            ):
+                self.reporte_processor = ReporteProcessor()
+                exito_carga, mensaje_carga = self.reporte_processor.cargar_archivo(
+                    self.sesion.ruta_reporte_original
+                )
+
+                if not exito_carga:
+                    messagebox.showwarning(
+                        "Advertencia",
+                        f"Se cargó el progreso pero no se pudo cargar el reporte original:\n{mensaje_carga}",
+                    )
+
+            # Actualizar interfaz
+            self.ruta_reporte_actual = getattr(
+                self.sesion, "ruta_reporte_original", "Desconocida"
+            )
+            nombre_archivo = (
+                os.path.basename(self.ruta_reporte_actual)
+                if self.ruta_reporte_actual != "Desconocida"
+                else "Progreso cargado"
+            )
+
+            # Obtener estadísticas
+            self.sesion.actualizar_estadisticas()
+            stats = self.sesion.estadisticas
+
+            self.lbl_archivo.config(
+                text=f"↻ {nombre_archivo} ({stats.escaneados}/{stats.total_boletos} escaneados)",
+                foreground=AppColors.DUPLICADO,
+            )
+
+            # Habilitar botones
+            self.btn_calcular_faltantes.config(state="normal")
+            self.btn_ver_faltantes.config(state="normal")
+            self.btn_exportar.config(state="normal")
+            self.btn_guardar_progreso.config(state="normal")
+
+            # Actualizar estadísticas en panel
+            self._actualizar_estadisticas()
+
+            # Limpiar lista de escaneos
+            self.lista_escaneos.limpiar()
+
+            # Añadir mensaje informativo
+            self.lista_escaneos.agregar_escaneo(
+                "INFO",
+                "ESCANEADO",
+                f"Progreso cargado: {stats.escaneados}/{stats.total_boletos} boletos ya escaneados",
+                datetime.now().strftime("%H:%M:%S"),
+            )
+
+            # Actualizar barra de estado
+            self.barra_estado.config(
+                text=f"Progreso cargado: {stats.escaneados}/{stats.total_boletos} boletos procesados"
+            )
+
+            # Enfocar campo de escaneo
+            self.campo_escaneo.entry.focus_set()
+
+            messagebox.showinfo(
+                "Progreso cargado",
+                f"Progreso cargado exitosamente.\n\n"
+                f"• Total boletos: {stats.total_boletos}\n"
+                f"• Ya escaneados: {stats.escaneados}\n"
+                f"• Pendientes: {stats.pendientes}\n"
+                f"• Duplicados: {stats.duplicados}",
+            )
+
+        except Exception as e:
+            messagebox.showerror(
+                "Error", f"Error al cargar progreso desde JSON:\n{str(e)}"
+            )
 
     def _cargar_reporte_con_estados(self, ruta_archivo: str):
         """Carga un reporte Excel/CSV que ya tiene estados"""
@@ -516,6 +631,7 @@ class MainWindow:
 
             # Crear nueva sesión con los boletos cargados
             self.sesion = SesionInventario()
+            self.sesion.ruta_reporte_original = ruta_archivo
             self.sesion.agregar_boletos(boletos)
 
             # Actualizar interfaz
@@ -579,21 +695,16 @@ class MainWindow:
             messagebox.showwarning("Advertencia", "No hay sesión activa para guardar.")
             return
 
-        # Sugerir nombre de archivo
+        # Obtener nombre base
         nombre_base = "progreso_inventario"
         if self.ruta_reporte_actual:
             nombre_base = os.path.splitext(os.path.basename(self.ruta_reporte_actual))[
                 0
             ]
 
-        fecha = datetime.now().strftime("%Y%m%d_%H%M%S")
-        nombre_sugerido = f"{nombre_base}_PROGRESO_{fecha}.json"
-
-        ruta_guardar = filedialog.asksaveasfilename(
-            title="Guardar progreso rápido",
-            defaultextension=".json",
-            initialfile=nombre_sugerido,
-            filetypes=[("Archivos JSON", "*.json")],
+        # USAR EL NUEVO GESTOR DE DIÁLOGOS
+        ruta_guardar = self.file_dialog_manager.guardar_progreso_json(
+            nombre_base=nombre_base, titulo="Guardar progreso rápido"
         )
 
         if not ruta_guardar:
@@ -696,15 +807,9 @@ class MainWindow:
             return
 
         try:
-            # Crear nombre de archivo automático
-            nombre_base = (
-                os.path.splitext(os.path.basename(self.ruta_reporte_actual))[0]
-                if self.ruta_reporte_actual
-                else "resultados"
-            )
-            fecha = datetime.now().strftime("%Y%m%d_%H%M%S")
-            ruta_auto = os.path.join(
-                os.path.expanduser("~"), f"{nombre_base}_AUTO_{fecha}.xlsx"
+            # USAR EL NUEVO GESTOR DE DIÁLOGOS PARA RUTA AUTOMÁTICA
+            ruta_auto = self.file_dialog_manager.obtener_ruta_autoexport(
+                self.ruta_reporte_actual
             )
 
             exito, mensaje = self.reporte_processor.exportar_con_resultados(
@@ -718,6 +823,39 @@ class MainWindow:
                 )
         except Exception as e:
             print(f"Error al exportar automáticamente: {e}")
+
+    def _verificar_carpetas_espanol(self):
+        """Verifica que las carpetas en español existan, sugiere crear si no"""
+        from pathlib import Path
+
+        carpetas_espanol = [
+            ("Documentos", Path.home() / "Documentos"),
+            ("Descargas", Path.home() / "Descargas"),
+        ]
+
+        faltantes = []
+        for nombre, ruta in carpetas_espanol:
+            if not ruta.exists():
+                faltantes.append(nombre)
+
+        if faltantes:
+            mensaje = (
+                "Las siguientes carpetas en español no se encontraron:\n\n"
+                f"{', '.join(faltantes)}\n\n"
+                "¿Desea crear estas carpetas ahora?\n\n"
+                "Nota: Si usa Windows/Mac en inglés, sus carpetas "
+                "probablemente se llaman 'Documents' y 'Downloads'."
+            )
+
+            respuesta = messagebox.askyesno("Carpetas en español", mensaje)
+            if respuesta:
+                for nombre, ruta in carpetas_espanol:
+                    if not ruta.exists():
+                        try:
+                            ruta.mkdir(parents=True, exist_ok=True)
+                            print(f"Carpeta '{nombre}' creada en: {ruta}")
+                        except Exception as e:
+                            print(f"Error al crear carpeta '{nombre}': {e}")
 
     def run(self):
         """Ejecuta la aplicación"""

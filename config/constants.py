@@ -3,8 +3,10 @@ CONSTANTES DE LA APLICACIÓN
 Clases y constantes para configuración centralizada
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Dict, Any
+import os
+from pathlib import Path
 
 
 @dataclass
@@ -35,7 +37,9 @@ class AppConstants:
     RESULTADO_NO_ENCONTRADO: str = "NO_ENCONTRADO"
 
     # Configuración de archivos
-    EXTENSIONES_PERMITIDAS: List[str] = (".xls", ".xlsx", ".csv")
+    EXTENSIONES_PERMITIDAS: List[str] = field(
+        default_factory=lambda: [".xls", ".xlsx", ".csv"]
+    )
     ENCODING: str = "utf-8"
 
     # Mensajes de interfaz
@@ -43,6 +47,27 @@ class AppConstants:
     MSG_BOLETO_ENCONTRADO: str = "Boleto encontrado y marcado"
     MSG_BOLETO_DUPLICADO: str = "Boleto ya fue escaneado"
     MSG_BOLETO_NO_REPORTADO: str = "Boleto no está en el reporte"
+
+    # Configuración de diálogos de archivo
+    FILTRO_EXCEL: List[tuple] = field(
+        default_factory=lambda: [("Archivos Excel", "*.xlsx *.xls")]
+    )
+    FILTRO_CSV: List[tuple] = field(default_factory=lambda: [("Archivos CSV", "*.csv")])
+    FILTRO_EXCEL_CSV: List[tuple] = field(
+        default_factory=lambda: [
+            ("Archivos Excel", "*.xlsx *.xls"),
+            ("Archivos CSV", "*.csv"),
+        ]
+    )
+    FILTRO_EXPORTACION: List[tuple] = field(
+        default_factory=lambda: [
+            ("Archivos Excel", "*.xlsx"),
+            ("Archivos CSV", "*.csv"),
+        ]
+    )
+    FILTRO_JSON: List[tuple] = field(
+        default_factory=lambda: [("Archivos JSON", "*.json")]
+    )
 
     def obtener_columnas_relevantes(self) -> List[str]:
         """Retorna lista de columnas relevantes para el procesamiento"""
@@ -60,6 +85,41 @@ class AppConstants:
         """Valida si un nombre de columna es válido"""
         nombres_validos = self.obtener_columnas_relevantes()
         return nombre_columna in nombres_validos
+
+    # Rutas por defecto (propiedades, no campos de dataclass)
+    @property
+    def CARPETA_DOCUMENTOS(self) -> str:
+        """Retorna la carpeta de Documentos del usuario (solo español)"""
+        documentos_path = Path.home() / "Documentos"
+        return str(documentos_path)
+
+    @property
+    def CARPETA_DESCARGAS(self) -> str:
+        """Retorna la carpeta de Descargas del usuario (solo español)"""
+        descargas_path = Path.home() / "Descargas"
+        return str(descargas_path)
+
+    @property
+    def CARPETA_RESULTADOS(self) -> str:
+        """Retorna la carpeta sugerida para guardar resultados (solo español)"""
+        resultados_path = (
+            Path.home() / "Documentos" / "Raspas" / "Resultados Inventario"
+        )
+
+        # Crear la carpeta completa incluyendo padres si es necesario
+        resultados_path.mkdir(parents=True, exist_ok=True)
+
+        return str(resultados_path)
+
+    @property
+    def CARPETA_PROGRESO(self) -> str:
+        """Retorna la carpeta sugerida para guardar progresos (solo español)"""
+        progreso_path = Path.home() / "Documentos" / "Raspas" / "Progresos Inventario"
+
+        # Crear la carpeta completa incluyendo padres si es necesario
+        progreso_path.mkdir(parents=True, exist_ok=True)
+
+        return str(progreso_path)
 
 
 class AppConfig:
